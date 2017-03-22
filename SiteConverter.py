@@ -1,55 +1,68 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
+# TODO: Optimize convert method
+# TODO: Add handling for duplicate site entries
+
 import pandas as pd
 import ipcalc
+import os
+import typing
+
+
+class SiteDefinitionException(Exception):
+    def __init__(self, message, errors):
+        super(SiteDefinitionException, self).__init__(message)
 
 
 class SiteConverter(object):
-    DCRUM_SITE_COLUMNS = ["Id", "Name", "Site Type", "Region", "Area",
-                          "UDL", "WAN", "Link Speed In", "Link Speed Out",
-                          "Comment", "Domains"]
+    # Dictionary with the formal site definition and default values
+    DCRUM_SITE_COLUMNS = {
+        "Id": '',
+        "Name": '',
+        "Site Type": 'Manual',
+        "Region": '',
+        "Area": '',
+        "UDL": 'false',
+        "WAN": 'false',
+        "Link Speed In": '',
+        "Link Speed Out": '',
+        "Comment": '',
+        "Domains": ''
+    }
 
     """docstring for ClassName"""
 
     def __init__(self, file):
-        self.remove_column_set = set()
-        self.df = pd.read_excel(file)
+        file_name, extension = os.path.splitext(file)
+        if extension == 'csv':
+            self.df = pd.read_csv(file)
+        else:
+            self.df = pd.read_excel(file)
         self.original_columns = self.df.columns.values
 
-    def _convertNetworkMask(self, ipWithNetworkMask):
-        ipRanges = tuple(str(ip) for ip in ipcalc.Network(ipWithNetworkMask))
-        return "{beginningIP}-{endingIP}".format(beginningIP=ipRanges[0], endingIP=ipRanges[-1])
+    def clean_to_site_definition(self, mappings: dict, translateNetworkMasks=False):
+        # Optimize this more
+        for column, value in SiteConverter.DCRUM_SITE_COLUMNS.items():
+            if mappings[column] and mappings[column] != value:
+                try:
+                    self.df[column] = self.df[mappings[column]]
+                except KeyError:
+                    self.df[column] = mappings[column]
+            else:
+                self.df[column] = value
+        if translateNetworkMasks:
+            def convertNetworkMask(ipWithNetworkMask: str):
+                ipRanges = tuple(str(ip)
+                                 for ip in ipcalc.Network(ipWithNetworkMask)
+                                 )
+                return "{beginningIP}-{endingIP}".format(
+                    beginningIP=ipRanges[0], endingIP=ipRanges[-1])
+            self.df['Domains'] = self.df[
+                'Domains'].apply(convertNetworkMask)
 
-    def convert(self, mappings):
-        ##OPTIMIZE THIS METHOD
-        self.df['Id'] = ''
-        self.df['Domains'] = self.df[
-            mappings['Domains']].apply(self._convertNetworkMask)
-        del self.df[mappings['Domains']]
-        self.remove_column_set.add(mappings['Domains'])
-        self.df['Name'] = self.df[mappings['Name']]
-        del self.df[mappings['Name']]
-        self.remove_column_set.add(mappings['Name'])
-        self.df['Site Type'] = 'Manual'
-        self.df['Region'] = 'Madrid'
-        self.df['Area'] = self.df[mappings['Area']]
-        del self.df[mappings['Area']]
-        self.remove_column_set.add(mappings['Area'])
-        self.df['UDL'] = 'false'
-        self.df['WAN'] = 'false'
-        self.df['Link Speed In'] = ''
-        self.df['Link Speed Out'] = ''
-        self.df['Comment'] = self.df[mappings['Comment']]
-        del self.df[mappings['Comment']]
-        self.remove_column_set.add(mappings['Comment'])
+    def transform_to_site_definition(self):
+        self.df = self.df[list(SiteConverter.DCRUM_SITE_COLUMNS.keys())]
 
-    def clean(self):
-        for original_column in (set(self.original_columns).difference(self.remove_column_set)):
-            del self.df[original_column]
-
-    def transform(self):
-        self.df = self.df[SiteConverter.DCRUM_SITE_COLUMNS]
-
-    def save(self, file_name, sep=';'):
+    def save_to_site_definition(self, file_name: str, sep: str=';'):
         self.df.to_csv(file_name, sep=sep, index=False)
